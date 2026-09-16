@@ -22,8 +22,15 @@ static HDC canvas;
 static HBITMAP bitmap;
 static HGDIOBJ old_bitmap;
 static void *pixels;
+static HDC frame_dc;
+static HBITMAP frame_bitmap;
+static HGDIOBJ frame_old_bitmap;
+static void *frame_pixels;
+static BITMAPINFO frame_info;
+static int frame_w,frame_h;
 static HFONT fonts[7];
 static int down[4], muted=0, hover=-1, client_w=WIDTH, client_h=HEIGHT;
+static int tapped[4];
 static HWND window;
 static double accumulator=0;
 static LARGE_INTEGER last_tick,frequency;
@@ -126,7 +133,7 @@ static void board(void) {
 }
 static void overlay(const char *big,const char *small) {
     roundbox(BX-158,BY-65,316,130,28,BG);
-    label(BX-152,BY-58,304,64,big,5,INK,DT_CENTER);
+    label(BX-152,BY-58,304,64,big,strlen(big)>4?4:5,INK,DT_CENTER);
     label(BX-149,BY+9,298,42,small,1,MUTED,DT_CENTER);
 }
 static void render(void) {
@@ -191,7 +198,64 @@ static void init_canvas(void) {
     const int sizes[]={12,15,16,29,32,52,42};
     for(int i=0;i<7;i++) fonts[i]=CreateFontA(-sizes[i],0,0,0,i==1?FW_NORMAL:FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,"Segoe UI");
 }
+static void destroy_frame(void) {
+    if(frame_dc && frame_old_bitmap) SelectObject(frame_dc,frame_old_bitmap);
+    if(frame_bitmap) DeleteObject(frame_bitmap);
+    if(frame_dc) DeleteDC(frame_dc);
+    frame_old_bitmap=NULL;
+    frame_dc=NULL; frame_bitmap=NULL; frame_pixels=NULL; frame_w=frame_h=0;
+}
+static int present_frame(HDC target,int cw,int ch) {
+    if(cw<=0 || ch<=0) return 1;
+    if(!frame_dc || cw!=frame_w || ch!=frame_h) {
+        destroy_frame(); frame_dc=CreateCompatibleDC(target);
+        memset(&frame_info,0,sizeof(frame_info)); frame_info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        frame_info.bmiHeader.biWidth=cw; frame_info.bmiHeader.biHeight=-ch;
+        frame_info.bmiHeader.biPlanes=1; frame_info.bmiHeader.biBitCount=32;
+        frame_bitmap=CreateDIBSection(frame_dc,&frame_info,DIB_RGB_COLORS,&frame_pixels,NULL,0);
+        if(!frame_dc || !frame_bitmap) { destroy_frame(); return 0; }
+        frame_old_bitmap=SelectObject(frame_dc,frame_bitmap); frame_w=cw; frame_h=ch;
+    }
+    // Compose the ENTIRE scaled frame, including margins, away from the window.
+    // Clearing the visible window before the slow supersampling copy caused flashing.
+    RECT bounds={0,0,cw,ch}; HBRUSH brush=CreateSolidBrush(BG);
+    FillRect(frame_dc,&bounds,brush); DeleteObject(brush);
+    float s=fminf((float)cw/WIDTH,(float)ch/HEIGHT);
+    int w=(int)(WIDTH*s),h=(int)(HEIGHT*s);
+    BITMAPINFO source; memset(&source,0,sizeof(source)); source.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    source.bmiHeader.biWidth=WIDTH*SCALE; source.bmiHeader.biHeight=-HEIGHT*SCALE;
+    source.bmiHeader.biPlanes=1; source.bmiHeader.biBitCount=32;
+    SetStretchBltMode(frame_dc,HALFTONE); SetBrushOrgEx(frame_dc,0,0,NULL);
+    GdiFlush(); // Finish queued drawing before reading DIB memory.
+    int copied=StretchDIBits(frame_dc,(cw-w)/2,(ch-h)/2,w,h,0,0,WIDTH*SCALE,HEIGHT*SCALE,pixels,&source,DIB_RGB_COLORS,SRCCOPY);
+    if((DWORD)copied==GDI_ERROR || copied==0) return 0;
+    GdiFlush();
+    // The only write to the visible surface is the completed frame, at native size.
+    return SetDIBitsToDevice(target,0,0,(DWORD)cw,(DWORD)ch,0,0,0,(UINT)ch,frame_pixels,&frame_info,DIB_RGB_COLORS)!=0;
+}
+static int test_presentation(void) {
+    const int sizes[][2]={{1200,820},{960,700},{1500,900},{850,610}};
+    int ok=1;
+    for(int i=0;i<4;i++) {
+        int cw=sizes[i][0],ch=sizes[i][1]; HDC target=CreateCompatibleDC(NULL);
+        BITMAPINFO bi; memset(&bi,0,sizeof(bi)); bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth=cw; bi.bmiHeader.biHeight=-ch; bi.bmiHeader.biPlanes=1; bi.bmiHeader.biBitCount=32;
+        void *data=NULL; HBITMAP bmp=CreateDIBSection(target,&bi,DIB_RGB_COLORS,&data,NULL,0);
+        if(!target || !bmp) { if(bmp) DeleteObject(bmp); if(target) DeleteDC(target); return 0; }
+        HGDIOBJ old=SelectObject(target,bmp);
+        float s=fminf((float)cw/WIDTH,(float)ch/HEIGHT); int ox=(cw-(int)(WIDTH*s))/2,oy=(ch-(int)(HEIGHT*s))/2;
+        for(int n=0;n<8;n++) {
+            render(); ok&=present_frame(target,cw,ch); GdiFlush();
+            ok&=GetPixel(target,ox+(int)(70*s),oy+(int)(78*s))==COLORS[0];
+            ok&=GetPixel(target,ox+(int)(850*s),oy+(int)(300*s))==PANEL;
+            ok&=GetPixel(target,0,0)==BG;
+        }
+        SelectObject(target,old); DeleteObject(bmp); DeleteDC(target);
+    }
+    return ok;
+}
 static void destroy_canvas(void) {
+    destroy_frame();
     SelectObject(canvas,GetStockObject(SYSTEM_FONT));
     for(int i=0;i<7;i++) DeleteObject(fonts[i]);
     SelectObject(canvas,old_bitmap); DeleteObject(bitmap); DeleteDC(canvas);
@@ -228,6 +292,10 @@ static void mouse_point(LPARAM lp,int *x,int *y) {
     *y=(int)(((float)GET_Y_LPARAM(lp)-((float)client_h-HEIGHT*s)*0.5f)/s);
 }
 static int key_index(WPARAM key) { return key==VK_SPACE?0:key=='A'?1:key=='I'?2:key=='L'?3:-1; }
+static void step_input(float dt) {
+    int input[4]; for(int i=0;i<4;i++) input[i]=down[i] || tapped[i];
+    game_step(&game,dt,input); memset(tapped,0,sizeof(tapped));
+}
 static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg) {
     case WM_ERASEBKGND: return 1;
@@ -236,6 +304,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_KEYDOWN: {
         int k=key_index(wp); if(k>=0) down[k]=1;
         if(lp&(1L<<30)) return 0;
+        if(k>=0 && game.phase==PLAYING) tapped[k]=1;
         if(wp==VK_RETURN) { if(game.phase==LOBBY || game.phase==FINISHED || game.phase==PAUSED) action(10); }
         if(wp=='P') game_pause(&game);
         if(wp=='R' && game.phase!=LOBBY) game_start(&game);
@@ -245,18 +314,18 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         if(wp==VK_ESCAPE) {
             int players=game.players,difficulty=game.difficulty; uint32_t seed=game.rng;
             game_init(&game,seed); game.players=players; game.difficulty=difficulty;
-            memset(down,0,sizeof(down)); accumulator=0;
+            memset(down,0,sizeof(down)); memset(tapped,0,sizeof(tapped)); accumulator=0;
         }
         return 0;
     }
     case WM_KEYUP: { int k=key_index(wp); if(k>=0) down[k]=0; return 0; }
-    case WM_KILLFOCUS: memset(down,0,sizeof(down)); if(game.phase==PLAYING || game.phase==COUNTDOWN) game_pause(&game); return 0;
+    case WM_KILLFOCUS: memset(down,0,sizeof(down)); memset(tapped,0,sizeof(tapped)); if(game.phase==PLAYING || game.phase==COUNTDOWN) game_pause(&game); return 0;
     case WM_MOUSEMOVE: { int x,y; mouse_point(lp,&x,&y); hover=hit(x,y); SetCursor(LoadCursor(NULL,hover>=0?IDC_HAND:IDC_ARROW)); return 0; }
     case WM_LBUTTONDOWN: { int x,y; mouse_point(lp,&x,&y); action(hit(x,y)); SetFocus(hwnd); return 0; }
     case WM_TIMER: {
         LARGE_INTEGER now; QueryPerformanceCounter(&now); double dt=(double)(now.QuadPart-last_tick.QuadPart)/(double)frequency.QuadPart; last_tick=now;
         if(dt>0.1) dt=0.1; accumulator+=dt;
-        while(accumulator>=1.0/120.0) { game_step(&game,1.0f/120.0f,down); accumulator-=1.0/120.0; }
+        while(accumulator>=1.0/120.0) { step_input(1.0f/120.0f); accumulator-=1.0/120.0; }
         if(game.sound_events && !muted) { int k=(game.sound_events&4)?2:(game.sound_events&2)?1:0; PlaySoundA((LPCSTR)sounds[k],NULL,SND_MEMORY|SND_ASYNC|SND_NODEFAULT); }
         game.sound_events=0;
         InvalidateRect(hwnd,NULL,FALSE);
@@ -274,22 +343,26 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
             SendMessage(hwnd,WM_LBUTTONDOWN,0,MAKELPARAM(880,230)); ok&=game.players==1;
             SendMessage(hwnd,WM_LBUTTONDOWN,0,MAKELPARAM(900,710)); ok&=game.phase==COUNTDOWN;
             SendMessage(hwnd,WM_KEYDOWN,'R',0); ok&=game.countdown==3.0f && game.remaining==MARBLE_COUNT;
+            game.phase=PLAYING;
+            for(int player=0;player<4;player++) {
+                const int keys[4]={VK_SPACE,'A','I','L'}; game.players=4;
+                SendMessage(hwnd,WM_KEYDOWN,(WPARAM)keys[player],0);
+                SendMessage(hwnd,WM_KEYUP,(WPARAM)keys[player],0);
+                step_input(1.0f/120.0f); ok&=game.hippos[player].bite>0;
+                ok&=down[player]==0 && tapped[player]==0;
+            }
+            ok&=test_presentation();
             DWORD handles_before=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
             for(int frame=0;frame<60;frame++) render();
             DWORD handles_after=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS); ok&=handles_before==handles_after;
-            FILE *f=fopen("smoke-result.txt","w"); if(f) { fprintf(f,"%s: window, timer, paint, start, pause, resume, key down/up, focus loss, lobby, player selection, difficulty, sound toggle, mouse buttons, restart, stable GDI resource count across 60 renders\n",ok?"PASS":"FAIL"); fclose(f); }
+            FILE *f=fopen("smoke-result.txt","w"); if(f) { fprintf(f,"%s: window, timer, paint, start, pause, resume, key down/up, focus loss, lobby, player selection, difficulty, sound toggle, mouse buttons, restart, stable GDI resource count, presentation pixel checks across four window sizes, short taps for all four players\n",ok?"PASS":"FAIL"); fclose(f); }
             DestroyWindow(hwnd); if(!ok) PostQuitMessage(1);
         }
         return 0;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC target=BeginPaint(hwnd,&ps); render();
-        RECT r; GetClientRect(hwnd,&r); HBRUSH b=CreateSolidBrush(BG); FillRect(target,&r,b); DeleteObject(b);
-        float s=fminf((float)client_w/WIDTH,(float)client_h/HEIGHT); int w=(int)(WIDTH*s),h=(int)(HEIGHT*s);
-        SetStretchBltMode(target,HALFTONE); SetBrushOrgEx(target,0,0,NULL);
-        XFORM identity={1,0,0,1,0,0}; SetWorldTransform(canvas,&identity);
-        StretchBlt(target,(client_w-w)/2,(client_h-h)/2,w,h,canvas,0,0,WIDTH*SCALE,HEIGHT*SCALE,SRCCOPY);
-        XFORM xf={SCALE,0,0,SCALE,0,0}; SetWorldTransform(canvas,&xf); EndPaint(hwnd,&ps); return 0;
+        present_frame(target,client_w,client_h); EndPaint(hwnd,&ps); return 0;
     }
     case WM_CLOSE: DestroyWindow(hwnd); return 0;
     case WM_DESTROY: KillTimer(hwnd,1); PostQuitMessage(0); return 0;

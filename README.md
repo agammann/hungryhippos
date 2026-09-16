@@ -4,6 +4,8 @@ A complete native Windows game written in C11, inspired by the marble scooping t
 
 **[Download the Windows game](https://github.com/agammann/hungry-hippos-c/raw/refs/heads/main/HungryHippos.exe)** · **[Download the complete project](https://github.com/agammann/hungry-hippos-c/archive/refs/heads/main.zip)** · **[Verification results](VERIFIED.md)**
 
+**Display fix:** The current executable prepares the whole frame offscreen before displaying it. This removes the repeated dark clears that caused flashing in the original build. Download the current executable again if you have that earlier copy. Short chomp taps are now retained between simulation updates, and the pause title fits its panel.
+
 ![Hungry Hippos game board with four colorful hippos and the player controls](preview.png)
 
 ## Play
