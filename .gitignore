@@ -1,0 +1,7 @@
+/build/
+/smoke-result.txt
+*.bmp
+*.o
+*.obj
+*.pdb
+*.ilk
