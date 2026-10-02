@@ -1,5 +1,19 @@
 # Verification
 
+## October 2, 2026 recheck
+
+- Rebuilt the current source with LLVM MinGW 20260922 (Clang 23.1.2), with warnings treated as errors. The full build passed under both PowerShell 7.6.5 and Windows PowerShell 5.1.
+- All 240 simulated rounds completed: 234 cleared every marble and six reached the time limit. Ownership, score conservation, physics, and round-state checks passed.
+- Both the shipped executable and the rebuilt executable passed the native window check, including presentation pixels at four window sizes, short taps for all four players, and stable GDI resource counts.
+- A visible run of the rebuilt game exercised the lobby, countdown, Space chomp, keyboard pause, mouse resume, a complete round ending in a tie, four-player selection, and replay resetting all scores and marbles. This was a brief check on one Windows machine.
+- The build now runs the native window check automatically. A local failure check confirmed that a missing report rejects the build even when a stale `PASS` report existed beforehand; a working directory containing spaces was also exercised.
+
+The shipped executable is unchanged. Its SHA-256 is `f30313727b0a1f47eef14620ea46b8505621ba43fe73684043a3e6739e5e78cc`.
+
+Speaker output still has not been verified by listening, and four people sharing a physical keyboard have not been tested.
+
+## September 15, 2026 checks
+
 Built and checked locally on September 15, 2026.
 
 | Check | Result |
@@ -18,7 +32,7 @@ Built and checked locally on September 15, 2026.
 
 The sound generator and sound toggle are implemented and compiled. Speaker output has not been verified by listening. Multiplayer controls were exercised programmatically; four people sharing a physical keyboard was not tested.
 
-The build script reruns the simulation suite. The native integration check is available through `HungryHippos.exe --smoke-test`.
+The build script now reruns both the simulation suite and the native integration check. The native check is also available separately through `HungryHippos.exe --smoke-test`.
 
 ## Display correction
 

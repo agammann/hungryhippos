@@ -16,4 +16,22 @@ New-Item -ItemType Directory -Force build | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
 & .\build\test_game.exe
 if ($LASTEXITCODE -ne 0) { throw 'Simulation tests failed.' }
+$nativeDirectory = Join-Path $PSScriptRoot 'build/native-test'
+New-Item -ItemType Directory -Force $nativeDirectory | Out-Null
+$nativeReport = Join-Path $nativeDirectory 'smoke-result.txt'
+if (Test-Path -LiteralPath $nativeReport) { Remove-Item -LiteralPath $nativeReport }
+$nativeProcess = Start-Process -FilePath (Join-Path $PSScriptRoot 'HungryHippos.exe') -ArgumentList '--smoke-test' -WorkingDirectory $nativeDirectory -WindowStyle Hidden -PassThru
+try {
+    if (-not $nativeProcess.WaitForExit(30000)) {
+        $nativeProcess.Kill()
+        throw 'Native window tests timed out after 30 seconds.'
+    }
+    if ($nativeProcess.ExitCode -ne 0) { throw "Native window tests failed with exit code $($nativeProcess.ExitCode)." }
+    if (-not (Test-Path -LiteralPath $nativeReport)) { throw 'Native window tests did not produce a result.' }
+    $result = Get-Content -LiteralPath $nativeReport -Raw
+    if (-not $result.StartsWith('PASS:')) { throw "Native window tests failed: $result" }
+    Write-Host $result.Trim()
+} finally {
+    $nativeProcess.Dispose()
+}
 Write-Host 'Built HungryHippos.exe. Double click it to play.'
