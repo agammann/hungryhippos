@@ -49,7 +49,9 @@ Or, with a suitable compiler on PATH:
 .\build.ps1
 ```
 
-The build treats compiler warnings as errors and runs simulation tests. The portable game simulation lives in `src/game.c`; the Windows window, input, rendering, and audio live in `src/main.c`.
+The build treats compiler warnings as errors and runs both the simulation suite and the hidden native window checks. A failed check stops the build; the native check has a 30 second timeout and writes its report to `build/native-test/smoke-result.txt`. GitHub Actions runs the same build on Windows for pull requests and changes to `main`.
+
+The [LLVM MinGW 20260922 release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20260922) with Clang 23.1.2 is used in CI. Download and extract its `ucrt-x86_64.zip` archive, then pass the extracted `bin/clang.exe` to the build command above. The portable game simulation lives in `src/game.c`; the Windows window, input, rendering, and audio live in `src/main.c`.
 
 ## Verification tools
 
