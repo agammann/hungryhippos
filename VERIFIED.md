@@ -1,5 +1,19 @@
 # Verification
 
+## v1.0.0 checks
+
+The Windows x64 executable is rebuilt from the versioned C11 source. Both release ZIPs carry the same commit, tree, file manifest and executable digest in `RELEASE.json`.
+
+- LLVM MinGW 20260922 (Clang 23.1.2) builds with warnings treated as errors. The build runs 240 simulated rounds; 234 clear every marble and six reach the time limit. Capture ownership, score conservation, finite physics, arena bounds, state transitions and restart checks pass.
+- The hidden native check exercises the real Win32 timer, input, mouse hit testing, focus loss, pause/resume, four presentation sizes, short taps for all four players and stable GDI resource counts.
+- The real-time seed-42 native fixture uses one human seat and three Lively computers. It clears all 28 marbles with scores 10, 7, 6 and 5, then checks fresh restart, player count, difficulty and mute controls. It saves seven rendered phases and a result file. WinMM accepts the sound submissions with no failed submission in these runs.
+- The paired-package consumer checks checksums, every source Git blob, Windows version metadata, the actual playable executable, malformed options and an unwritable snapshot path. It rebuilds the extracted source with Windows PowerShell 5.1.
+- Missing compiler and unsuccessful build paths keep the last successful executable. The source launcher explains how to obtain a playable executable when it is missing.
+
+The local machine runs Windows build 26300. GitHub Actions repeats the package checks on its Windows runner before publication. These checks use programmatic input through the game window; accepted WinMM submissions do not establish audible speaker output or physical keyboard rollover. Listening and pressing Space, A, I and L together are separate hardware checks.
+
+The sections below describe the earlier executable and historical checks, not the v1 package digest.
+
 ## October 2, 2026 recheck
 
 - Rebuilt the current source with LLVM MinGW 20260922 (Clang 23.1.2), with warnings treated as errors. The full build passed under both PowerShell 7.6.5 and Windows PowerShell 5.1.

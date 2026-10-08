@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "game.h"
+#include "version.h"
 
 #define WIDTH 1200
 #define HEIGHT 820
@@ -36,6 +38,10 @@ static double accumulator=0;
 static LARGE_INTEGER last_tick,frequency;
 static unsigned char sounds[3][9000];
 static int smoke=0, smoke_ticks=0;
+static int acceptance=0, acceptance_stage=0, acceptance_ok=1, acceptance_wait=0;
+static int audio_queued=0, audio_failed=0;
+static Phase acceptance_last_phase=(Phase)-1;
+static Game acceptance_paused;
 static const float BX=420, BY=448;
 
 static void fill(float x,float y,float w,float h,COLORREF color) {
@@ -189,14 +195,16 @@ static void render(void) {
         label(BX-164,BY+12,328,33,"Another helping? Press Enter.",1,MUTED,DT_CENTER);
     }
 }
-static void init_canvas(void) {
+static int init_canvas(void) {
     canvas=CreateCompatibleDC(NULL);
     BITMAPINFO bi; memset(&bi,0,sizeof(bi)); bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
     bi.bmiHeader.biWidth=WIDTH*SCALE; bi.bmiHeader.biHeight=-HEIGHT*SCALE; bi.bmiHeader.biPlanes=1; bi.bmiHeader.biBitCount=32; bi.bmiHeader.biCompression=BI_RGB;
     bitmap=CreateDIBSection(canvas,&bi,DIB_RGB_COLORS,&pixels,NULL,0); old_bitmap=SelectObject(canvas,bitmap);
+    if(!canvas || !bitmap || !pixels || !old_bitmap) return 0;
     SetGraphicsMode(canvas,GM_ADVANCED); XFORM xf={SCALE,0,0,SCALE,0,0}; SetWorldTransform(canvas,&xf);
     const int sizes[]={12,15,16,29,32,52,42};
-    for(int i=0;i<7;i++) fonts[i]=CreateFontA(-sizes[i],0,0,0,i==1?FW_NORMAL:FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,"Segoe UI");
+    for(int i=0;i<7;i++) { fonts[i]=CreateFontA(-sizes[i],0,0,0,i==1?FW_NORMAL:FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,"Segoe UI"); if(!fonts[i]) return 0; }
+    return 1;
 }
 static void destroy_frame(void) {
     if(frame_dc && frame_old_bitmap) SelectObject(frame_dc,frame_old_bitmap);
@@ -261,7 +269,7 @@ static void destroy_canvas(void) {
     SelectObject(canvas,old_bitmap); DeleteObject(bitmap); DeleteDC(canvas);
 }
 static int snapshot(const char *path) {
-    render(); FILE *f=fopen(path,"wb"); if(!f) return 0;
+    render(); GdiFlush(); FILE *f=fopen(path,"wb"); if(!f) return 0;
     BITMAPFILEHEADER fh; BITMAPINFOHEADER ih; memset(&fh,0,sizeof(fh)); memset(&ih,0,sizeof(ih));
     fh.bfType=0x4d42; fh.bfOffBits=sizeof(fh)+sizeof(ih); fh.bfSize=fh.bfOffBits+WIDTH*SCALE*HEIGHT*SCALE*4;
     ih.biSize=sizeof(ih); ih.biWidth=WIDTH*SCALE; ih.biHeight=-HEIGHT*SCALE; ih.biPlanes=1; ih.biBitCount=32; ih.biSizeImage=WIDTH*SCALE*HEIGHT*SCALE*4;
@@ -296,6 +304,64 @@ static void step_input(float dt) {
     int input[4]; for(int i=0;i<4;i++) input[i]=down[i] || tapped[i];
     game_step(&game,dt,input); memset(tapped,0,sizeof(tapped));
 }
+/* A bounded real-time fixture uses the native window's documented controls.
+   It does not accelerate simulation or replace the physical-keyboard check. */
+static void acceptance_tick(HWND hwnd) {
+    if(game.phase!=acceptance_last_phase) {
+        FILE *trace=fopen("acceptance-trace.txt","a");
+        if(trace) { fprintf(trace,"stage=%d phase=%d countdown=%.3f time=%.3f remaining=%d focus=%d\n",acceptance_stage,(int)game.phase,game.countdown,game.time,game.remaining,GetFocus()==hwnd); fclose(trace); }
+        acceptance_last_phase=game.phase;
+    }
+    /* Other desktop activity can deactivate the fixture window. Keep this
+       programmatic check running without changing ordinary focus behavior. */
+    if(game.phase==PAUSED && acceptance_stage!=3) {
+        SetFocus(hwnd); SendMessage(hwnd,WM_KEYDOWN,VK_RETURN,0);
+        if(acceptance_stage>=2) SendMessage(hwnd,WM_KEYDOWN,VK_SPACE,0);
+    }
+    if(acceptance_stage==0) {
+        acceptance_ok&=game.phase==LOBBY && game.remaining==MARBLE_COUNT;
+        acceptance_ok&=snapshot("lobby.bmp");
+        SendMessage(hwnd,WM_KEYDOWN,VK_RETURN,0);
+        acceptance_ok&=game.phase==COUNTDOWN;
+        acceptance_ok&=snapshot("countdown.bmp"); acceptance_stage=1;
+    } else if(acceptance_stage==1 && game.phase==PLAYING) {
+        SendMessage(hwnd,WM_KEYDOWN,VK_SPACE,0); acceptance_stage=2;
+    } else if(acceptance_stage==2 && game.time<57.5f) {
+        acceptance_ok&=game.remaining<MARBLE_COUNT;
+        acceptance_ok&=snapshot("playing.bmp");
+        SendMessage(hwnd,WM_KEYDOWN,'P',0); acceptance_ok&=game.phase==PAUSED;
+        acceptance_paused=game; acceptance_stage=3;
+    } else if(acceptance_stage==3) {
+        acceptance_ok&=memcmp(&game,&acceptance_paused,sizeof(game))==0;
+        if(++acceptance_wait==20) {
+            acceptance_ok&=snapshot("paused.bmp");
+            SendMessage(hwnd,WM_KEYDOWN,VK_RETURN,0); acceptance_ok&=game.phase==PLAYING;
+            SendMessage(hwnd,WM_KILLFOCUS,0,0); acceptance_ok&=game.phase==PAUSED;
+            for(int i=0;i<4;i++) acceptance_ok&=!down[i] && !tapped[i];
+            SendMessage(hwnd,WM_KEYDOWN,VK_RETURN,0);
+            SendMessage(hwnd,WM_KEYDOWN,VK_SPACE,0); acceptance_stage=4;
+        }
+    } else if(acceptance_stage==4 && game.phase==FINISHED) {
+        int sum=0; for(int i=0;i<4;i++) sum+=game.hippos[i].score;
+        acceptance_ok&=sum+game.remaining==MARBLE_COUNT && game_winners(&game)>0;
+        acceptance_ok&=game.remaining==0 || game.time==0;
+        acceptance_ok&=snapshot("finished.bmp");
+        FILE *f=fopen("acceptance-result.txt","w");
+        if(f) fprintf(f,"version=%s\nseed=42\nround_remaining=%d\nscores=%d,%d,%d,%d\nwinner_mask=%d\naudio_queued=%d\naudio_failed=%d\n",HIPPO_VERSION,game.remaining,game.hippos[0].score,game.hippos[1].score,game.hippos[2].score,game.hippos[3].score,game_winners(&game),audio_queued,audio_failed);
+        SendMessage(hwnd,WM_KEYDOWN,'R',0);
+        acceptance_ok&=game.phase==COUNTDOWN && game.countdown==3 && game.time==ROUND_SECONDS && game.remaining==MARBLE_COUNT;
+        for(int i=0;i<4;i++) acceptance_ok&=game.hippos[i].score==0;
+        acceptance_ok&=snapshot("restart.bmp");
+        SendMessage(hwnd,WM_KEYDOWN,VK_ESCAPE,0); acceptance_ok&=game.phase==LOBBY;
+        for(int i=1;i<=4;i++) { SendMessage(hwnd,WM_KEYDOWN,(WPARAM)('0'+i),0); acceptance_ok&=game.players==i; }
+        for(int i=0;i<3;i++) { int pace=game.difficulty; SendMessage(hwnd,WM_KEYDOWN,'D',0); acceptance_ok&=game.difficulty==(pace+1)%3; }
+        SendMessage(hwnd,WM_KEYDOWN,'M',0); acceptance_ok&=muted;
+        SendMessage(hwnd,WM_KEYDOWN,'M',0); acceptance_ok&=!muted;
+        acceptance_ok&=snapshot("four-players.bmp");
+        if(f) { fprintf(f,"%s: real native lobby/countdown/round/captures/pause/focus/resume/result/restart/player/pace/sound controls; seven complete rendered phases\n",acceptance_ok?"PASS":"FAIL"); if(fclose(f)!=0) acceptance_ok=0; } else acceptance_ok=0;
+        DestroyWindow(hwnd); PostQuitMessage(acceptance_ok?0:1); acceptance_stage=5;
+    }
+}
 static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg) {
     case WM_ERASEBKGND: return 1;
@@ -326,9 +392,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         LARGE_INTEGER now; QueryPerformanceCounter(&now); double dt=(double)(now.QuadPart-last_tick.QuadPart)/(double)frequency.QuadPart; last_tick=now;
         if(dt>0.1) dt=0.1; accumulator+=dt;
         while(accumulator>=1.0/120.0) { step_input(1.0f/120.0f); accumulator-=1.0/120.0; }
-        if(game.sound_events && !muted) { int k=(game.sound_events&4)?2:(game.sound_events&2)?1:0; PlaySoundA((LPCSTR)sounds[k],NULL,SND_MEMORY|SND_ASYNC|SND_NODEFAULT); }
+        if(game.sound_events && !muted) { int k=(game.sound_events&4)?2:(game.sound_events&2)?1:0; if(PlaySoundA((LPCSTR)sounds[k],NULL,SND_MEMORY|SND_ASYNC|SND_NODEFAULT)) audio_queued++; else audio_failed++; }
         game.sound_events=0;
         InvalidateRect(hwnd,NULL,FALSE);
+        if(acceptance) acceptance_tick(hwnd);
         if(smoke && ++smoke_ticks==12) {
             int ok=game.phase==COUNTDOWN;
             SendMessage(hwnd,WM_KEYDOWN,'P',0); ok&=game.phase==PAUSED;
@@ -370,17 +437,30 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     }
 }
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR cmd,int show) {
-    (void)previous; (void)cmd; SetProcessDPIAware(); game_init(&game,(uint32_t)GetTickCount()); init_canvas(); init_sounds();
+    (void)previous; (void)cmd;
+    uint32_t seed=(uint32_t)GetTickCount(); const char *snapshot_path=NULL; int snapshot_playing=0;
     for(int i=1;i<__argc;i++) {
         if(strcmp(__argv[i],"--snapshot")==0 && i+1<__argc) {
-            const char *path=__argv[++i];
+            snapshot_path=__argv[++i];
             if(i+1<__argc && strcmp(__argv[i+1],"playing")==0) {
-                game_start(&game); game.countdown=0; game.phase=PLAYING;
-                int held[4]={1,0,0,0}; for(int t=0;t<180;t++) game_step(&game,1.0f/120.0f,held);
+                snapshot_playing=1; i++;
             }
-            int ok=snapshot(path); destroy_canvas(); return ok?0:1;
-        }
-        if(strcmp(__argv[i],"--smoke-test")==0) smoke=1;
+        } else if(strcmp(__argv[i],"--smoke-test")==0) smoke=1;
+        else if(strcmp(__argv[i],"--acceptance-test")==0) acceptance=1;
+        else if(strcmp(__argv[i],"--seed")==0 && i+1<__argc) {
+            char *end=NULL; errno=0; const char *value=__argv[++i]; unsigned long number=strtoul(value,&end,10);
+            if(errno || !*value || value[0]=='-' || *end || !number || number>UINT32_MAX) { fprintf(stderr,"Seed must be an integer from 1 to 4294967295.\n"); return 2; }
+            seed=(uint32_t)number;
+        } else { fprintf(stderr,"Unknown or incomplete option. Use --smoke-test, --acceptance-test, or --snapshot FILE [playing], with optional --seed NUMBER.\n"); return 2; }
+    }
+    if((smoke!=0)+(acceptance!=0)+(snapshot_path!=NULL)>1) { fprintf(stderr,"Choose one verification mode.\n"); return 2; }
+    if(acceptance) seed=42;
+    SetProcessDPIAware(); game_init(&game,seed);
+    if(!init_canvas()) { destroy_canvas(); MessageBoxA(NULL,"Windows could not create the game's graphics resources. Close other graphics applications and try again.","Hungry Hippos",MB_OK|MB_ICONERROR); return 1; }
+    init_sounds();
+    if(snapshot_path) {
+        if(snapshot_playing) { game_start(&game); game.countdown=0; game.phase=PLAYING; int held[4]={1,0,0,0}; for(int t=0;t<180;t++) game_step(&game,1.0f/120.0f,held); }
+        int ok=snapshot(snapshot_path); if(!ok) fprintf(stderr,"Could not write snapshot. Choose a writable output path.\n"); destroy_canvas(); return ok?0:1;
     }
     WNDCLASSA wc; memset(&wc,0,sizeof(wc)); wc.lpfnWndProc=wndproc; wc.hInstance=instance; wc.lpszClassName="HungryHipposTable";
     wc.hCursor=LoadCursor(NULL,IDC_ARROW); wc.hIcon=LoadIcon(instance,MAKEINTRESOURCE(1)); if(!wc.hIcon) wc.hIcon=LoadIcon(NULL,IDI_APPLICATION);
@@ -388,10 +468,11 @@ int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR cmd,int show) {
     RECT rect={0,0,WIDTH,HEIGHT}; AdjustWindowRect(&rect,WS_OVERLAPPEDWINDOW,FALSE);
     int ww=rect.right-rect.left,wh=rect.bottom-rect.top;
     if(wh>GetSystemMetrics(SM_CYSCREEN)-80) { wh=GetSystemMetrics(SM_CYSCREEN)-80; ww=(int)((float)wh*WIDTH/HEIGHT); }
-    window=CreateWindowA(wc.lpszClassName,"Hungry Hippos | The Marble Club",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,ww,wh,NULL,NULL,instance,NULL);
+    window=CreateWindowA(wc.lpszClassName,"Hungry Hippos " HIPPO_VERSION " | The Marble Club",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,ww,wh,NULL,NULL,instance,NULL);
     if(!window) { destroy_canvas(); return 1; }
     QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&last_tick);
-    SetTimer(window,1,16,NULL); ShowWindow(window,smoke?SW_HIDE:show); UpdateWindow(window);
+    if(!SetTimer(window,1,16,NULL)) { DestroyWindow(window); destroy_canvas(); return 1; }
+    ShowWindow(window,acceptance?SW_SHOW:smoke?SW_HIDE:show); if(acceptance) SetFocus(window); UpdateWindow(window);
     if(smoke) { SendMessage(window,WM_KEYDOWN,VK_RETURN,0); InvalidateRect(window,NULL,FALSE); SendMessage(window,WM_PAINT,0,0); }
     MSG msg; int result;
     while((result=GetMessage(&msg,NULL,0,0))>0) { TranslateMessage(&msg); DispatchMessage(&msg); }

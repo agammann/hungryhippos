@@ -1,0 +1,5 @@
+#ifndef HIPPO_VERSION_H
+#define HIPPO_VERSION_H
+#define HIPPO_VERSION "1.0.0"
+#define HIPPO_VERSION_NUMBERS 1,0,0,0
+#endif

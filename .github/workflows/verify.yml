@@ -1,33 +1,71 @@
 name: Verify Windows game
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
+concurrency:
+  group: hippos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        shell: pwsh
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Download and verify LLVM MinGW
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Get the matching LLVM MinGW toolchain
+        shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
           $archive = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666') { throw 'Compiler archive checksum mismatch.' }
           $toolchain = Join-Path $env:RUNNER_TEMP 'llvm-mingw'
-          Invoke-WebRequest 'https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip' -OutFile $archive
-          $expected = 'e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666'
-          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
-            throw 'LLVM MinGW download checksum mismatch.'
-          }
           Expand-Archive -LiteralPath $archive -DestinationPath $toolchain
-          "HIPPOS_COMPILER=$toolchain/llvm-mingw-20260922-ucrt-x86_64/bin/clang.exe" >> $env:GITHUB_ENV
-      - name: Build and run simulation and native window tests
-        run: ./build.ps1 -Compiler $env:HIPPOS_COMPILER
+          $compiler = Join-Path $toolchain 'llvm-mingw-20260922-ucrt-x86_64/bin/clang.exe'
+          "HIPPOS_COMPILER=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build, package and use both delivered ZIPs
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\build.ps1 -Compiler $env:HIPPOS_COMPILER
+          .\scripts\package-release.ps1
+          .\scripts\check-release.ps1 -Compiler $env:HIPPOS_COMPILER -Out (Join-Path $env:RUNNER_TEMP 'hippos-consumer')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hippos-release
+          path: release-artifacts/
+          if-no-files-found: error
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hippos-check-results
+          path: |
+            build/smoke-result.txt
+            ${{ runner.temp }}/hippos-consumer/reports/**/*.txt
+          if-no-files-found: ignore
+  publish:
+    needs: windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hippos-release
+          path: release-artifacts
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { default: publish } = await import(process.env.GITHUB_WORKSPACE + '/scripts/release.mjs');
+            await publish({ github, context, core });
