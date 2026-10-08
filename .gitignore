@@ -1,4 +1,7 @@
 /build/
+/release-artifacts/
+/release-staging/
+/reports/
 /smoke-result.txt
 *.bmp
 *.o
