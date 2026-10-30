@@ -1,9 +1,9 @@
 # Developing Hungry Hippos
 
-Start with the [v1 source ZIP](https://github.com/agammann/hungryhippos/releases/tag/v1.0.0), or clone the matching tag:
+Start with the [v1 source ZIP](https://github.com/agammann/hungryhippos/releases/tag/v1.0.1), or clone the matching tag:
 
 ```powershell
-git clone --branch v1.0.0 https://github.com/agammann/hungryhippos.git
+git clone --branch v1.0.1 https://github.com/agammann/hungryhippos.git
 cd hungryhippos
 powershell -ExecutionPolicy Bypass -File .\build.ps1 -Compiler C:\tools\llvm-mingw\bin\clang.exe
 .\Play.cmd

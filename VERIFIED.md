@@ -1,5 +1,9 @@
 # Verification
 
+## v1.0.1 portability check
+
+A local MinGW GCC 16.2.0 build with warnings treated as errors passed 240 simulated rounds and the hidden native window smoke check on October 30, 2026. This validates the source portability change; the release workflow separately checks the pinned Clang build and delivered ZIPs.
+
 ## v1.0.0 checks
 
 The Windows x64 executable is rebuilt from the versioned C11 source. Both release ZIPs carry the same commit, tree, file manifest and executable digest in `RELEASE.json`.

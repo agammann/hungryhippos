@@ -129,7 +129,8 @@ static void board(void) {
         oval(x+2,y+4,10,9,C(107,159,145));
         oval(x,y,9,9,C(209,214,206)); oval(x-1,y-2,8,7,C(250,249,231)); oval(x-3,y-4,3,2,C(255,255,255));
     }
-    for(int i=2;i>=0;i--) hippo(i); hippo(3);
+    for(int i=2;i>=0;i--) hippo(i);
+    hippo(3);
     const int lx[4]={359,67,359,656},ly[4]={751,437,118,437};
     for(int i=0;i<4;i++) {
         roundbox((float)lx[i],(float)ly[i],122,29,14,PANEL);
@@ -274,7 +275,8 @@ static int snapshot(const char *path) {
     fh.bfType=0x4d42; fh.bfOffBits=sizeof(fh)+sizeof(ih); fh.bfSize=fh.bfOffBits+WIDTH*SCALE*HEIGHT*SCALE*4;
     ih.biSize=sizeof(ih); ih.biWidth=WIDTH*SCALE; ih.biHeight=-HEIGHT*SCALE; ih.biPlanes=1; ih.biBitCount=32; ih.biSizeImage=WIDTH*SCALE*HEIGHT*SCALE*4;
     int ok=fwrite(&fh,sizeof(fh),1,f)==1 && fwrite(&ih,sizeof(ih),1,f)==1 && fwrite(pixels,ih.biSizeImage,1,f)==1;
-    if(fclose(f)!=0) ok=0; return ok;
+    if(fclose(f)!=0) ok=0;
+    return ok;
 }
 static void put16(unsigned char *p,unsigned int n) { p[0]=(unsigned char)n; p[1]=(unsigned char)(n>>8); }
 static void put32(unsigned char *p,unsigned int n) { for(int i=0;i<4;i++) p[i]=(unsigned char)(n>>(8*i)); }
@@ -390,7 +392,8 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_LBUTTONDOWN: { int x,y; mouse_point(lp,&x,&y); action(hit(x,y)); SetFocus(hwnd); return 0; }
     case WM_TIMER: {
         LARGE_INTEGER now; QueryPerformanceCounter(&now); double dt=(double)(now.QuadPart-last_tick.QuadPart)/(double)frequency.QuadPart; last_tick=now;
-        if(dt>0.1) dt=0.1; accumulator+=dt;
+        if(dt>0.1) dt=0.1;
+        accumulator+=dt;
         while(accumulator>=1.0/120.0) { step_input(1.0f/120.0f); accumulator-=1.0/120.0; }
         if(game.sound_events && !muted) { int k=(game.sound_events&4)?2:(game.sound_events&2)?1:0; if(PlaySoundA((LPCSTR)sounds[k],NULL,SND_MEMORY|SND_ASYNC|SND_NODEFAULT)) audio_queued++; else audio_failed++; }
         game.sound_events=0;

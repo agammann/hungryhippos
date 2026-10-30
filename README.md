@@ -2,7 +2,7 @@
 
 A native Windows marble-scooping game for one to four local players, with computer opponents filling empty seats. It is written in C11, draws its own board and synthesizes its sound effects. This is an independent fan game.
 
-**[Download v1.0.0 for Windows x64](https://github.com/agammann/hungryhippos/releases/download/v1.0.0/hungryhippos_1.0.0_windows-x64.zip)** · **[Download matching C source](https://github.com/agammann/hungryhippos/releases/download/v1.0.0/hungryhippos_1.0.0_source.zip)** · **[Verification](VERIFIED.md)**
+**[Download v1.0.1 for Windows x64](https://github.com/agammann/hungryhippos/releases/download/v1.0.1/hungryhippos_1.0.1_windows-x64.zip)** · **[Download matching C source](https://github.com/agammann/hungryhippos/releases/download/v1.0.1/hungryhippos_1.0.1_source.zip)** · **[Verification](VERIFIED.md)**
 
 ![The game board and player controls](preview.png)
 
@@ -51,7 +51,7 @@ The source package contains C code rather than a prebuilt game. [Developer instr
 
 ## Upgrade and troubleshooting
 
-Extract a new release into a separate folder and run its executable; there are no saved games, settings files or account data to migrate. Round scores, player count and sound selection reset on a fresh launch. Keep the old folder if you want to return to that version. `RELEASE.json` identifies the package's source commit, and the executable's Windows **Properties → Details** shows version 1.0.0. Release assets include `SHA256SUMS`; compare a downloaded ZIP with `Get-FileHash .\hungryhippos_1.0.0_windows-x64.zip -Algorithm SHA256`.
+Extract a new release into a separate folder and run its executable; there are no saved games, settings files or account data to migrate. Round scores, player count and sound selection reset on a fresh launch. Keep the old folder if you want to return to that version. `RELEASE.json` identifies the package's source commit, and the executable's Windows **Properties → Details** shows version 1.0.1. Release assets include `SHA256SUMS`; compare a downloaded ZIP with `Get-FileHash .\hungryhippos_1.0.1_windows-x64.zip -Algorithm SHA256`.
 
 - **No executable:** use the Windows ZIP to play, or build the source ZIP first. `Play.cmd` reports the missing file and points to these options.
 - **Keys seem unresponsive:** click the game window, resume a paused round, and confirm the human player count. Seats marked COMPUTER do not use human keys.
